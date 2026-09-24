@@ -1,0 +1,201 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: Azurecicd
+
+stages:
+
+# =========================
+# DEV
+# =========================
+
+- stage: DevDeploy
+  displayName: Deploy to Dev
+
+  variables:
+    - group: Dev
+
+  jobs:
+  - deployment: DevJob
+    environment: Dev
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: 'latest'
+
+          - task: TerraformTask@5
+            displayName: Terraform Init
+            inputs:
+              provider: azurerm
+              command: init
+              workingDirectory: $(Work_Dir)
+              backendServiceArm: $(devServiceConnection)
+              backendAzureRmOverrideSubscriptionID: $(SubscriptionID)
+              backendAzureRmResourceGroupName: $(devrgname)
+              backendAzureRmStorageAccountName: $(devrgstrg)
+              backendAzureRmContainerName: $(devrgcontainer)
+              backendAzureRmKey: $(devrgbackkey)
+
+          - task: TerraformTask@5
+            displayName: Terraform Validate
+            inputs:
+              provider: azurerm
+              command: validate
+              workingDirectory: $(Work_Dir)
+
+          - task: TerraformTask@5
+            displayName: Terraform Plan
+            inputs:
+              provider: azurerm
+              command: plan
+              workingDirectory: $(Work_Dir)
+              environmentServiceNameAzureRM: $(devServiceConnection)
+
+          - task: TerraformTask@5
+            displayName: Terraform Apply
+            inputs:
+              provider: azurerm
+              command: apply
+              workingDirectory: $(Work_Dir)
+              environmentServiceNameAzureRM: $(devServiceConnection)
+
+
+# =========================
+# PROD
+# =========================
+
+- stage: ProdDeploy
+  displayName: Deploy to Prod
+  dependsOn: DevDeploy
+
+  variables:
+    - group: Prod
+
+  jobs:
+  - deployment: ProdJob
+    environment: Prod
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: 'latest'
+
+          - task: TerraformTask@5
+            displayName: Terraform Init
+            inputs:
+              provider: azurerm
+              command: init
+              workingDirectory: $(Work_Dir)
+              backendServiceArm: $(prodServiceConnection)
+              backendAzureRmOverrideSubscriptionID: $(SubscriptionID)
+              backendAzureRmResourceGroupName: $(prodrgname)
+              backendAzureRmStorageAccountName: $(prodrgstrg)
+              backendAzureRmContainerName: $(prodcontainer)
+              backendAzureRmKey: $(prodrgbackkey)
+
+          - task: TerraformTask@5
+            displayName: Terraform Validate
+            inputs:
+              provider: azurerm
+              command: validate
+              workingDirectory: $(Work_Dir)
+
+          - task: TerraformTask@5
+            displayName: Terraform Plan
+            inputs:
+              provider: azurerm
+              command: plan
+              workingDirectory: $(Work_Dir)
+              environmentServiceNameAzureRM: $(prodServiceConnection)
+
+          - task: TerraformTask@5
+            displayName: Terraform Apply
+            inputs:
+              provider: azurerm
+              command: apply
+              workingDirectory: $(Work_Dir)
+              environmentServiceNameAzureRM: $(prodServiceConnection)
+
+
+# =========================
+# QA
+# =========================
+
+- stage: QaDeploy
+  displayName: Deploy to QA
+  dependsOn: ProdDeploy
+
+  variables:
+    - group: Qa
+
+  jobs:
+  - deployment: QaJob
+    environment: Qa
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: 'latest'
+
+          - task: TerraformTask@5
+            displayName: Terraform Init
+            inputs:
+              provider: azurerm
+              command: init
+              workingDirectory: $(Work_Dir)
+              backendServiceArm: $(qaServiceConnection)
+              backendAzureRmOverrideSubscriptionID: $(SubscriptionID)
+              backendAzureRmResourceGroupName: $(qargname)
+              backendAzureRmStorageAccountName: $(qargstrg)
+              backendAzureRmContainerName: $(qargcontainer)
+              backendAzureRmKey: $(qabackkey)
+
+          - task: TerraformTask@5
+            displayName: Terraform Validate
+            inputs:
+              provider: azurerm
+              command: validate
+              workingDirectory: $(Work_Dir)
+
+          - task: TerraformTask@5
+            displayName: Terraform Plan
+            inputs:
+              provider: azurerm
+              command: plan
+              workingDirectory: $(Work_Dir)
+              environmentServiceNameAzureRM: $(qaServiceConnection)
+
+          - task: TerraformTask@5
+            displayName: Terraform Apply
+            inputs:
+              provider: azurerm
+              command: apply
+              workingDirectory: $(Work_Dir)
+              environmentServiceNameAzureRM: $(qaServiceConnection)
+
+
