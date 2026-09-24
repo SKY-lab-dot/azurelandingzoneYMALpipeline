@@ -1,201 +1,195 @@
+
+name: azurelandingzoneYMALpipeline
+
 trigger:
-  branches:
-    include:
-      - main
+- main
 
 pool:
   name: Azurecicd
 
 stages:
 
-# =========================
-# DEV
-# =========================
-
-- stage: DevDeploy
-  displayName: Deploy to Dev
-
-  variables:
-    - group: Dev
+- stage: CI
+  displayName: 'Terraform CI'
 
   jobs:
-  - deployment: DevJob
-    environment: Dev
+  - job: CIWork
+    displayName: 'Terraform CI Work'
 
-    strategy:
-      runOnce:
-        deploy:
-          steps:
+    steps:
 
-          - checkout: self
+    - checkout: self
 
-          - task: TerraformInstaller@1
-            displayName: Install Terraform
-            inputs:
-              terraformVersion: 'latest'
+    - task: AzureCLI@3
+      displayName: 'Azure CLI Login'
+      inputs:
+        connectionType: 'azureRM'
+        azureSubscription: 'shailesh'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az account show
+          az group list --output table
 
-          - task: TerraformTask@5
-            displayName: Terraform Init
-            inputs:
-              provider: azurerm
-              command: init
-              workingDirectory: $(Work_Dir)
-              backendServiceArm: $(devServiceConnection)
-              backendAzureRmOverrideSubscriptionID: $(SubscriptionID)
-              backendAzureRmResourceGroupName: $(devrgname)
-              backendAzureRmStorageAccountName: $(devrgstrg)
-              backendAzureRmContainerName: $(devrgcontainer)
-              backendAzureRmKey: $(devrgbackkey)
+    - task: TerraformInstaller@1
+      displayName: 'Terraform Install'
+      inputs:
+        terraformVersion: 'latest'
 
-          - task: TerraformTask@5
-            displayName: Terraform Validate
-            inputs:
-              provider: azurerm
-              command: validate
-              workingDirectory: $(Work_Dir)
+    - task: PowerShell@2
+      displayName: 'Terraform Init'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Set-Location "$(System.DefaultWorkingDirectory)\Azure-Landing-Zone-Terraform_VM\Parent_Module\dev"
 
-          - task: TerraformTask@5
-            displayName: Terraform Plan
-            inputs:
-              provider: azurerm
-              command: plan
-              workingDirectory: $(Work_Dir)
-              environmentServiceNameAzureRM: $(devServiceConnection)
+          Write-Host "Working Directory:"
+          Get-Location
 
-          - task: TerraformTask@5
-            displayName: Terraform Apply
-            inputs:
-              provider: azurerm
-              command: apply
-              workingDirectory: $(Work_Dir)
-              environmentServiceNameAzureRM: $(devServiceConnection)
+          Write-Host "Terraform Version:"
+          terraform version
 
+          Write-Host "Terraform Init:"
 
-# =========================
-# PROD
-# =========================
+          terraform init `
+            -backend-config="storage_account_name=sitterraformstate2026" `
+            -backend-config="container_name=tfstate" `
+            -backend-config="key=sit.terraform.tfstate" `
+            -backend-config="resource_group_name=sit" `
+            -backend-config="subscription_id=5ef4ee5d-6bd4-4c27-acc2-af8816fed413" `
+            -backend-config="use_azuread_auth=true"
 
-- stage: ProdDeploy
-  displayName: Deploy to Prod
-  dependsOn: DevDeploy
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
-  variables:
-    - group: Prod
+    - task: PowerShell@2
+      displayName: 'Terraform Validate'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Set-Location "$(System.DefaultWorkingDirectory)\Azure-Landing-Zone-Terraform_VM\Parent_Module\dev"
 
-  jobs:
-  - deployment: ProdJob
-    environment: Prod
+          terraform validate
 
-    strategy:
-      runOnce:
-        deploy:
-          steps:
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
-          - checkout: self
+    - task: PowerShell@2
+      displayName: 'Terraform Plan'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Set-Location "$(System.DefaultWorkingDirectory)\Azure-Landing-Zone-Terraform_VM\Parent_Module\dev"
 
-          - task: TerraformInstaller@1
-            displayName: Install Terraform
-            inputs:
-              terraformVersion: 'latest'
+          terraform plan `
+            -input=false `
+            -out="$(Build.ArtifactStagingDirectory)\tfplan"
 
-          - task: TerraformTask@5
-            displayName: Terraform Init
-            inputs:
-              provider: azurerm
-              command: init
-              workingDirectory: $(Work_Dir)
-              backendServiceArm: $(prodServiceConnection)
-              backendAzureRmOverrideSubscriptionID: $(SubscriptionID)
-              backendAzureRmResourceGroupName: $(prodrgname)
-              backendAzureRmStorageAccountName: $(prodrgstrg)
-              backendAzureRmContainerName: $(prodcontainer)
-              backendAzureRmKey: $(prodrgbackkey)
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
-          - task: TerraformTask@5
-            displayName: Terraform Validate
-            inputs:
-              provider: azurerm
-              command: validate
-              workingDirectory: $(Work_Dir)
+    - task: PowerShell@2
+      displayName: 'Check Terraform Plan File'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Write-Host "Checking Terraform plan file..."
+          Get-ChildItem "$(Build.ArtifactStagingDirectory)" -Recurse
 
-          - task: TerraformTask@5
-            displayName: Terraform Plan
-            inputs:
-              provider: azurerm
-              command: plan
-              workingDirectory: $(Work_Dir)
-              environmentServiceNameAzureRM: $(prodServiceConnection)
-
-          - task: TerraformTask@5
-            displayName: Terraform Apply
-            inputs:
-              provider: azurerm
-              command: apply
-              workingDirectory: $(Work_Dir)
-              environmentServiceNameAzureRM: $(prodServiceConnection)
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Terraform Plan'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)\tfplan'
+        ArtifactName: 'terraform-plan'
+        publishLocation: 'Container'
 
 
-# =========================
-# QA
-# =========================
-
-- stage: QaDeploy
-  displayName: Deploy to QA
-  dependsOn: ProdDeploy
-
-  variables:
-    - group: Qa
+- stage: CD
+  displayName: 'Terraform CD'
+  dependsOn: CI
+  condition: succeeded()
 
   jobs:
-  - deployment: QaJob
-    environment: Qa
+  - job: CDWork
+    displayName: 'Terraform CD Work'
 
-    strategy:
-      runOnce:
-        deploy:
-          steps:
+    steps:
 
-          - checkout: self
+    - checkout: self
 
-          - task: TerraformInstaller@1
-            displayName: Install Terraform
-            inputs:
-              terraformVersion: 'latest'
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download Terraform Plan'
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'terraform-plan'
+        downloadPath: '$(Pipeline.Workspace)'
 
-          - task: TerraformTask@5
-            displayName: Terraform Init
-            inputs:
-              provider: azurerm
-              command: init
-              workingDirectory: $(Work_Dir)
-              backendServiceArm: $(qaServiceConnection)
-              backendAzureRmOverrideSubscriptionID: $(SubscriptionID)
-              backendAzureRmResourceGroupName: $(qargname)
-              backendAzureRmStorageAccountName: $(qargstrg)
-              backendAzureRmContainerName: $(qargcontainer)
-              backendAzureRmKey: $(qabackkey)
+    - task: PowerShell@2
+      displayName: 'Check Downloaded Terraform Plan'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Write-Host "Downloaded Terraform plan:"
+          Get-ChildItem "$(Pipeline.Workspace)" -Recurse
 
-          - task: TerraformTask@5
-            displayName: Terraform Validate
-            inputs:
-              provider: azurerm
-              command: validate
-              workingDirectory: $(Work_Dir)
+    - task: AzureCLI@3
+      displayName: 'Azure CLI Login CD'
+      inputs:
+        connectionType: 'azureRM'
+        azureSubscription: 'shailesh'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az account show
+          az group list --output table
 
-          - task: TerraformTask@5
-            displayName: Terraform Plan
-            inputs:
-              provider: azurerm
-              command: plan
-              workingDirectory: $(Work_Dir)
-              environmentServiceNameAzureRM: $(qaServiceConnection)
+    - task: TerraformInstaller@1
+      displayName: 'Terraform Install'
+      inputs:
+        terraformVersion: 'latest'
 
-          - task: TerraformTask@5
-            displayName: Terraform Apply
-            inputs:
-              provider: azurerm
-              command: apply
-              workingDirectory: $(Work_Dir)
-              environmentServiceNameAzureRM: $(qaServiceConnection)
+    - task: PowerShell@2
+      displayName: 'Terraform Init CD'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Set-Location "$(System.DefaultWorkingDirectory)\Azure-Landing-Zone-Terraform_VM\Parent_Module\dev"
+
+          Write-Host "Terraform Version:"
+          terraform version
+
+          Write-Host "Terraform Init CD:"
+
+          terraform init `
+            -backend-config="storage_account_name=sitterraformstate2026" `
+            -backend-config="container_name=tfstate" `
+            -backend-config="key=sit.terraform.tfstate" `
+            -backend-config="resource_group_name=sit" `
+            -backend-config="subscription_id=5ef4ee5d-6bd4-4c27-acc2-af8816fed413" `
+            -backend-config="use_azuread_auth=true"
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+    - task: PowerShell@2
+      displayName: 'Terraform Apply'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Set-Location "$(System.DefaultWorkingDirectory)\Azure-Landing-Zone-Terraform_VM\Parent_Module\dev"
+
+          terraform apply `
+            -input=false `
+            "$(Pipeline.Workspace)\terraform-plan\tfplan"
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
 
 
